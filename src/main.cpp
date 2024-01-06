@@ -97,6 +97,7 @@ void setup() {
   attachInterrupt(interruptPin, ISR, CHANGE);
 
   wifiManager.setConfigPortalTimeout(5);
+  wifiManager.setWiFiAutoReconnect(false);
   wifiManager.disconnect();
 }
 
