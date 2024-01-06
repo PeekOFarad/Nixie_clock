@@ -32,6 +32,8 @@ const char* ntpServer2 = "time.nist.gov";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
+WiFiManager wifiManager;
+
 const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
 
 ESP32Time rtc(0);
@@ -65,7 +67,7 @@ void setup() {
   ////////////////////////////////////////////////////////////////////////////////////////
   //WiFiManager
   //Local intialization. Once its business is done, there is no need to keep it around
-  WiFiManager wifiManager;
+  
   //reset saved settings
   //wifiManager.resetSettings();
   
@@ -93,23 +95,26 @@ void setup() {
   //Interrupt (ZeroCross detection)
   pinMode(interruptPin, INPUT);
   attachInterrupt(interruptPin, ISR, CHANGE);
+
+  wifiManager.setConfigPortalTimeout(5);
+  wifiManager.disconnect();
 }
 
 void loop() {
   unsigned long currentMillis = millis();
   if ((currentMillis - prevMillis >= 50)) {
     prevMillis = currentMillis;
-    if ((timeinfo.tm_hour == 0)&&(timeinfo.tm_min == 0)&&(timeinfo.tm_sec == 0)) {
-      getLocalTime(&timeinfo);
-    }
-    else {
-      timeinfo = rtc.getTimeStruct();
-    }
+    timeinfo = rtc.getTimeStruct();
   }
+
   if ((prevSec != timeinfo.tm_sec)) {
     prevSec = timeinfo.tm_sec;
-    //update time every loop, if it's midnight, get atomic time
-    
+    //if it's midnight, get atomic time
+    if ((timeinfo.tm_hour == 0)&&(timeinfo.tm_min == 0)&&(timeinfo.tm_sec == 0)) {
+      wifiManager.autoConnect("AutoConnectAP");
+      getLocalTime(&timeinfo);
+      wifiManager.disconnect();
+    }
     //Get tens and units of time 
     uint32_t H_T,H_U,M_T,M_U,S_T,S_U = 0;
     H_T = (timeinfo.tm_hour/10)%10;
