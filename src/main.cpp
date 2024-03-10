@@ -11,6 +11,7 @@ const int serialDataPin = 5; // DS
 const int clockPin = 7; // SHCP
 const int latchPin = 6; // STCP
 ShiftRegister74HC595<numberOfShiftRegisters> sr(serialDataPin, clockPin, latchPin);
+const int btn = 3; //Capacitive button
 
 uint32_t PinValuesA = 0b01000001000000000001000000000001;
 uint32_t PinValuesB = 0b01000010000000000010000000000010;
@@ -32,9 +33,11 @@ const char* ntpServer2 = "time.nist.gov";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
+uint32_t H_T,H_U,M_T,M_U,S_T,S_U = 0;
+
 WiFiManager wifiManager;
 
-const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
+const char* timezone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
 
 ESP32Time rtc(0);
 
@@ -47,6 +50,26 @@ void IRAM_ATTR ISR() {
   else {
     sr.setAll(PinValues_T);
   }  
+}
+
+void setTimezone(String timezone){
+  //Serial.printf("  Setting Timezone to %s\n",timezone.c_str());
+  setenv("TZ",timezone.c_str(),1);  //  Now adjust the TZ.  Clock settings are adjusted to show the new local time
+  tzset();
+}
+
+void initTime(String timezone){
+  // struct tm timeinfo;
+
+  // Serial.println("Setting up time");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);    // First connect to NTP server, with 0 TZ offset
+  if(!getLocalTime(&timeinfo)){
+    // Serial.println("  Failed to obtain time");
+    return;
+  }
+  // Serial.println("  Got the time from NTP");
+  // Now we can set the real timezone
+  setTimezone(timezone);
 }
 
 void printLocalTime()
@@ -62,6 +85,27 @@ inline uint32_t bit_set(uint32_t vector, uint32_t n) {
       return vector | ((uint32_t)1 << n);
 }
 
+void loadPinRegs(){
+  //clear pins registers
+    PinValuesA = 0;
+    PinValuesB = 0;
+    //Load values to display correct digits
+    PinValuesA = bit_set(PinValuesA, H_T);
+    PinValuesB = bit_set(PinValuesB, H_U);
+
+    PinValuesA = bit_set(PinValuesA, M_T+10);
+    PinValuesB = bit_set(PinValuesB, M_U+10);
+
+    PinValuesA = bit_set(PinValuesA, S_T+20);
+    PinValuesB = bit_set(PinValuesB, S_U+20);
+    //load register values into bytes in PinValues arrays
+    //This is needed, because the ShiftReg library uses Byte arrays to load data
+    for (int i = 0; i <= 3;i++) {
+      PinValues_T[i] = (PinValuesA >> (i)*8) & 0xFF;
+      PinValues_U[i] = (PinValuesB >> (i)*8) & 0xFF;
+    }
+}
+
 void setup() {
   Serial.begin(115200);
   ////////////////////////////////////////////////////////////////////////////////////////
@@ -72,7 +116,7 @@ void setup() {
   //wifiManager.resetSettings();
   
   //set custom ip for portal
-  wifiManager.setAPStaticIPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
+  // wifiManager.setAPStaticIPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
   
   //fetches ssid and pass from eeprom and tries to connect
   //if it does not connect it starts an access point with the specified name
@@ -85,8 +129,9 @@ void setup() {
   //if you get here you have connected to the WiFi
   // Serial.println("connected...yeey :)");
   //////////////////////////////////////////////////////////////////////////////////////
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
-  printLocalTime();
+  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+  // printLocalTime();
+  initTime(timezone);
   rtc.setTimeStruct(timeinfo);
   //Shift Register
   pinMode(serialDataPin, OUTPUT);
@@ -108,7 +153,19 @@ void loop() {
     timeinfo = rtc.getTimeStruct();
   }
 
-  if ((prevSec != timeinfo.tm_sec)) {
+  if (digitalRead(btn) == HIGH){
+    S_T = ((timeinfo.tm_year + 1900) % 100) / 10;
+    S_U = ((timeinfo.tm_year + 1900) % 100) % 10;
+    M_T = (timeinfo.tm_mon + 1) / 10; // Month is zero-based, so adding 1
+    M_U = (timeinfo.tm_mon + 1) % 10; // Month is zero-based, so adding 1
+    H_T = timeinfo.tm_mday / 10;
+    H_U = timeinfo.tm_mday % 10;
+    loadPinRegs();
+    while (digitalRead(btn) != LOW) {}// Check if the button is released
+
+    delay(5000);
+  }
+  else if ((prevSec != timeinfo.tm_sec)) {
     prevSec = timeinfo.tm_sec;
     //if it's midnight, get atomic time
     if ((timeinfo.tm_hour == 0)&&(timeinfo.tm_min == 0)&&(timeinfo.tm_sec == 0)) {
@@ -117,31 +174,13 @@ void loop() {
       wifiManager.disconnect();
     }
     //Get tens and units of time 
-    uint32_t H_T,H_U,M_T,M_U,S_T,S_U = 0;
-    H_T = (timeinfo.tm_hour/10)%10;
+    H_T = timeinfo.tm_hour/10;
     H_U = timeinfo.tm_hour%10;
-    M_T = (timeinfo.tm_min/10)%10;
+    M_T = timeinfo.tm_min/10;
     M_U = timeinfo.tm_min%10;
-    S_T = (timeinfo.tm_sec/10)%10;
+    S_T = timeinfo.tm_sec/10;
     S_U = timeinfo.tm_sec%10;
     
-    //clear pins registers
-    PinValuesA = 0;
-    PinValuesB = 0;
-    //Load values to display correct digits
-    PinValuesA = bit_set(PinValuesA, H_T);
-    PinValuesB = bit_set(PinValuesB, H_U);
-
-    PinValuesA = bit_set(PinValuesA, M_T+10);
-    PinValuesB = bit_set(PinValuesB, M_U+10);
-
-    PinValuesA = bit_set(PinValuesA, S_T+20);
-    PinValuesB = bit_set(PinValuesB, S_U+20);
-    //load register values into bytes in PinValues arrays
-    //This is needed, because the ShiftReg library uses Byte arrays to load data
-    for (int i = 0; i <= 3;i++) {
-      PinValues_T[i] = (PinValuesA >> (i)*8) & 0xFF;
-      PinValues_U[i] = (PinValuesB >> (i)*8) & 0xFF;
-    }
+    loadPinRegs();
   }
 }
