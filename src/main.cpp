@@ -34,6 +34,7 @@ const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
 uint32_t H_T,H_U,M_T,M_U,S_T,S_U = 0;
+uint32_t nixie[6] = {0,0,0,0,0,0};
 
 WiFiManager wifiManager;
 
@@ -84,27 +85,38 @@ void printLocalTime()
 inline uint32_t bit_set(uint32_t vector, uint32_t n) {
       return vector | ((uint32_t)1 << n);
 }
-
-void loadPinRegs(){
-  //clear pins registers
-    PinValuesA = 0;
-    PinValuesB = 0;
-    //Load values to display correct digits
-    PinValuesA = bit_set(PinValuesA, H_T);
-    PinValuesB = bit_set(PinValuesB, H_U);
-
-    PinValuesA = bit_set(PinValuesA, M_T+10);
-    PinValuesB = bit_set(PinValuesB, M_U+10);
-
-    PinValuesA = bit_set(PinValuesA, S_T+20);
-    PinValuesB = bit_set(PinValuesB, S_U+20);
-    //load register values into bytes in PinValues arrays
-    //This is needed, because the ShiftReg library uses Byte arrays to load data
-    for (int i = 0; i <= 3;i++) {
+inline uint32_t bit_clr(uint32_t vector, uint32_t n) {
+      return vector & ~((uint32_t)1 << n);
+}
+//Splits 32 bit word into 8but words for the shift regsiter library
+void loadShiftRegs(){
+  for (int i = 0; i <= 3;i++) {
       PinValues_T[i] = (PinValuesA >> (i)*8) & 0xFF;
       PinValues_U[i] = (PinValuesB >> (i)*8) & 0xFF;
     }
 }
+//converts integers into a 32bit word, that controlls the actual nixie pins
+void loadPinRegs(bool zero = false){
+  //clear pins registers
+    PinValuesA = 0;
+    PinValuesB = 0;
+    //Load values to display correct digits
+    if (!zero) {
+      PinValuesA = bit_set(PinValuesA, nixie[5]);
+      PinValuesB = bit_set(PinValuesB, nixie[4]);
+
+      PinValuesA = bit_set(PinValuesA, nixie[3]+10);
+      PinValuesB = bit_set(PinValuesB, nixie[2]+10);
+
+      PinValuesA = bit_set(PinValuesA, nixie[1]+20);
+      PinValuesB = bit_set(PinValuesB, nixie[0]+20);
+    }
+    //load register values into bytes in PinValues arrays
+    //This is needed, because the ShiftReg library uses Byte arrays to load data
+    loadShiftRegs();
+}
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -154,16 +166,138 @@ void loop() {
   }
 
   if (digitalRead(btn) == HIGH){
-    S_T = ((timeinfo.tm_year + 1900) % 100) / 10;
-    S_U = ((timeinfo.tm_year + 1900) % 100) % 10;
-    M_T = (timeinfo.tm_mon + 1) / 10; // Month is zero-based, so adding 1
-    M_U = (timeinfo.tm_mon + 1) % 10; // Month is zero-based, so adding 1
-    H_T = timeinfo.tm_mday / 10;
-    H_U = timeinfo.tm_mday % 10;
+    nixie[0] = ((timeinfo.tm_year + 1900) % 100) % 10;
+    nixie[1] = ((timeinfo.tm_year + 1900) % 100) / 10;
+    nixie[2] = (timeinfo.tm_mon + 1) % 10; // Month is zero-based, so adding 1
+    nixie[3] = (timeinfo.tm_mon + 1) / 10; // Month is zero-based, so adding 1
+    nixie[4] = timeinfo.tm_mday % 10;
+    nixie[5] = timeinfo.tm_mday / 10;
     loadPinRegs();
-    while (digitalRead(btn) != LOW) {}// Check if the button is released
+    while (digitalRead(btn) == HIGH) {} // Check if the button is released
+    prevMillis = millis();
+    currentMillis = prevMillis;
+    
+    while(currentMillis - prevMillis <= 500) { //wait for a double press
+      if (digitalRead(btn) == HIGH) //stopwatch
+      {
+        while(digitalRead(btn) == HIGH) {} //wait for btn depress
+        memset(nixie, 0, sizeof(nixie));
+        loadPinRegs();
+        while(digitalRead(btn) == LOW) {} //wait for btn press
+        while(digitalRead(btn) == HIGH) {} //wait for btn depress
+        unsigned long startTime = millis();
+        while(digitalRead(btn) == LOW) {  //start stopwatch
+          unsigned long currentTime = millis(); // Get the current time
 
-    delay(5000);
+          // Calculate elapsed time since the start time
+          unsigned long elapsedTime = currentTime - startTime;
+
+          // Calculate hundredths of a second, seconds, and minutes
+          unsigned int hundredths = (elapsedTime / 10) % 100;
+          unsigned int seconds = (elapsedTime / 1000) % 60;
+          unsigned int minutes = (elapsedTime / 60000) % 60;
+
+          // Extract units and tens digits
+          nixie[0] = hundredths % 10;      // Units digit of hundredths
+          nixie[1] = hundredths / 10;      // Tens digit of hundredths
+          nixie[2] = seconds % 10;         // Units digit of seconds
+          nixie[3] = seconds / 10;         // Tens digit of seconds
+          nixie[4] = minutes % 10;         // Units digit of minutes
+          nixie[5] = minutes / 10;         // Tens digit of minutes
+
+          loadPinRegs(); // Assuming this function updates the display
+        }
+        while(digitalRead(btn) == HIGH) {} //wait for btn depress
+        //wait for button press before jumping out of stopwatch mode
+        while(digitalRead(btn) == LOW) {} //wait for btn press
+      }
+      currentMillis = millis();
+    }
+
+    delay(2000);
+    if (digitalRead(btn) == HIGH)
+    {
+      //blink progresively faster
+      for (int i = 0; i < 20; i++)
+      {
+        loadPinRegs(true);
+        delay(200-i*10);
+        loadPinRegs();
+        delay(200-i*10);
+      }
+      //blink fast for a bit
+      for (int i = 0; i < 10; i++)
+      {
+        loadPinRegs(true);
+        delay(20);
+        loadPinRegs();
+        delay(20);
+      }
+      loadPinRegs(true);
+      delay(500);
+      //memset(nixie, 0, sizeof(nixie)); // zero out
+      //NUMBER WAVE
+      int d1 = 30;
+      for (int l = 0; l < 9; l++)
+      {
+        for (int i = 2; i >= 0; i--)
+        {
+          PinValuesB = bit_set(PinValuesB, i*10+l);
+          loadShiftRegs(); 
+          delay(d1);//50
+          PinValuesA = bit_set(PinValuesA, i*10+l);
+          loadShiftRegs();
+          delay(d1); 
+        }
+        for (int i = 2; i >= 0; i--)
+        {
+          PinValuesB = bit_clr(PinValuesB, i*10+l);
+          loadShiftRegs(); 
+          delay(d1);
+          PinValuesA = bit_clr(PinValuesA, i*10+l);
+          loadShiftRegs();
+          delay(d1); 
+        }
+      }
+      //NUMBER PONG
+      int d2 = 80;
+      for (int l = 9; l >= 0; l--)
+      {
+        for (int i = 2; i >= 0; i--)
+        {
+          PinValuesB = bit_set(PinValuesB, i*10+l);
+          loadShiftRegs(); 
+          delay(d2);
+          PinValuesB = bit_clr(PinValuesB, i*10+l);
+          PinValuesA = bit_set(PinValuesA, i*10+l);
+          loadShiftRegs();
+          delay(d2);
+          PinValuesA = bit_clr(PinValuesA, i*10+l); 
+        }
+
+          PinValuesB = bit_set(PinValuesB, l);
+          loadShiftRegs();
+          delay(d2);
+          PinValuesB = bit_clr(PinValuesB, l);
+
+        for (int i = 1; i <= 2; i++)
+        {
+          PinValuesA = bit_set(PinValuesA, i*10+l);
+          loadShiftRegs(); 
+          delay(d2);
+          PinValuesA = bit_clr(PinValuesA, i*10+l);
+          PinValuesB = bit_set(PinValuesB, i*10+l);
+          loadShiftRegs();
+          delay(d2);
+          PinValuesB = bit_clr(PinValuesB, i*10+l); 
+        }
+
+      }
+    }
+    
+    // while (digitalRead(btn) != LOW) {}// Check if the button is released
+
+    
   }
   else if ((prevSec != timeinfo.tm_sec)) {
     prevSec = timeinfo.tm_sec;
@@ -173,14 +307,14 @@ void loop() {
       getLocalTime(&timeinfo);
       wifiManager.disconnect();
     }
-    //Get tens and units of time 
-    H_T = timeinfo.tm_hour/10;
-    H_U = timeinfo.tm_hour%10;
-    M_T = timeinfo.tm_min/10;
-    M_U = timeinfo.tm_min%10;
-    S_T = timeinfo.tm_sec/10;
-    S_U = timeinfo.tm_sec%10;
-    
+    //Get tens and units of time
+    nixie[0] = timeinfo.tm_sec%10;
+    nixie[1] = timeinfo.tm_sec/10;
+    nixie[2] = timeinfo.tm_min%10;
+    nixie[3] = timeinfo.tm_min/10;
+    nixie[4] = timeinfo.tm_hour%10;
+    nixie[5] = timeinfo.tm_hour/10;
+
     loadPinRegs();
   }
 }
