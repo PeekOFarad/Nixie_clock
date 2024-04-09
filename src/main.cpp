@@ -177,7 +177,7 @@ void loop() {
     prevMillis = millis();
     currentMillis = prevMillis;
     
-    while(currentMillis - prevMillis <= 500) { //wait for a double press
+    while(currentMillis - prevMillis <= 200) { //wait for a double press
       if (digitalRead(btn) == HIGH) //stopwatch
       {
         while(digitalRead(btn) == HIGH) {} //wait for btn depress
@@ -237,64 +237,119 @@ void loop() {
       delay(500);
       //memset(nixie, 0, sizeof(nixie)); // zero out
       //NUMBER WAVE
-      int d1 = 30;
+      const int delay_wave = 30;
       for (int l = 0; l < 9; l++)
       {
         for (int i = 2; i >= 0; i--)
         {
           PinValuesB = bit_set(PinValuesB, i*10+l);
           loadShiftRegs(); 
-          delay(d1);//50
+          delay(delay_wave);//50
           PinValuesA = bit_set(PinValuesA, i*10+l);
           loadShiftRegs();
-          delay(d1); 
+          delay(delay_wave); 
         }
         for (int i = 2; i >= 0; i--)
         {
           PinValuesB = bit_clr(PinValuesB, i*10+l);
           loadShiftRegs(); 
-          delay(d1);
+          delay(delay_wave);
           PinValuesA = bit_clr(PinValuesA, i*10+l);
           loadShiftRegs();
-          delay(d1); 
+          delay(delay_wave); 
         }
       }
       //NUMBER PONG
-      int d2 = 80;
+      const int delay_pong = 70;
       for (int l = 9; l >= 0; l--)
       {
+        //shift number l from left to right
         for (int i = 2; i >= 0; i--)
         {
           PinValuesB = bit_set(PinValuesB, i*10+l);
           loadShiftRegs(); 
-          delay(d2);
+          delay(delay_pong);
           PinValuesB = bit_clr(PinValuesB, i*10+l);
           PinValuesA = bit_set(PinValuesA, i*10+l);
           loadShiftRegs();
-          delay(d2);
+          delay(delay_pong);
           PinValuesA = bit_clr(PinValuesA, i*10+l); 
         }
 
-          PinValuesB = bit_set(PinValuesB, l);
-          loadShiftRegs();
-          delay(d2);
-          PinValuesB = bit_clr(PinValuesB, l);
+        //shift the number l one to the right
+        PinValuesB = bit_set(PinValuesB, l);
+        loadShiftRegs();
+        delay(delay_pong);
+        PinValuesB = bit_clr(PinValuesB, l);
 
+        //shift the number l right to left
         for (int i = 1; i <= 2; i++)
         {
           PinValuesA = bit_set(PinValuesA, i*10+l);
           loadShiftRegs(); 
-          delay(d2);
+          delay(delay_pong);
           PinValuesA = bit_clr(PinValuesA, i*10+l);
           PinValuesB = bit_set(PinValuesB, i*10+l);
           loadShiftRegs();
-          delay(d2);
+          delay(delay_pong);
           PinValuesB = bit_clr(PinValuesB, i*10+l); 
         }
 
       }
+      //SHIFT IN CURRENT TIME
+      const int delay_finish = 80;
+      int display_num = 0;
+      for (int l = 0; l <= 4; l++) {
+        //first shift in hours, then minutes, then seconds
+        switch (l)
+        {
+        case 0:
+          display_num = timeinfo.tm_hour/10;
+          break;
+        case 1:
+          display_num = timeinfo.tm_hour%10;
+          break;
+        case 2:
+          display_num = timeinfo.tm_min/10;
+          break;
+        case 3:
+          display_num = timeinfo.tm_min%10;
+          break;
+        case 4:
+          display_num = timeinfo.tm_sec/10;
+          break;
+        default:
+          break;
+        }
+        
+        for (int i = 5; i >= l; i--) {
+          /*
+          This loop index runs from 5 to l, instead of from 2 to 0 as in the previous effect.
+          This value is responsible for selecting the correct 10x range in PinValues,
+          i.e. selecting the correct pair of nixies.
+          */
+          int sel_digits = (i/2)*10;
+          if (i%2 == 1)
+          {//1,3,5
+            PinValuesB = bit_set(PinValuesB, sel_digits+display_num);
+            loadShiftRegs();
+            delay(delay_finish);
+            if (i > l) { //clear the bit except for the last cycle, i.e. keep the shifted digits visible
+              PinValuesB = bit_clr(PinValuesB, sel_digits+display_num);
+            }
+          }
+          if (i%2 == 0)
+          {//0,2,4
+            PinValuesA = bit_set(PinValuesA, sel_digits+display_num);
+            loadShiftRegs();
+            delay(delay_finish);
+            if (i > l) { //clear the bit except for the last cycle, i.e. keep the shifted digits visible
+              PinValuesA = bit_clr(PinValuesA, sel_digits+display_num);
+            }
+          }
+        }
+      }
     }
-    
     // while (digitalRead(btn) != LOW) {}// Check if the button is released
 
     
