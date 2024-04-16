@@ -25,6 +25,7 @@ uint8_t PinValues_U[] = {0,0,0,0};
 
 const int interruptPin = 10;
 
+unsigned long currentMillis = 0;
 unsigned long prevMillis = 0;
 unsigned int prevSec = 0;
 
@@ -104,13 +105,27 @@ void loadPinRegs(bool zero = false){
     if (!zero) {
       PinValuesA = bit_set(PinValuesA, nixie[5]);
       PinValuesB = bit_set(PinValuesB, nixie[4]);
-
       PinValuesA = bit_set(PinValuesA, nixie[3]+10);
       PinValuesB = bit_set(PinValuesB, nixie[2]+10);
-
       PinValuesA = bit_set(PinValuesA, nixie[1]+20);
       PinValuesB = bit_set(PinValuesB, nixie[0]+20);
     }
+    //load register values into bytes in PinValues arrays
+    //This is needed, because the ShiftReg library uses Byte arrays to load data
+    loadShiftRegs();
+}
+
+void setAllPins(int arg){
+  //clear pins registers
+    PinValuesA = 0;
+    PinValuesB = 0;
+    //Load values to display correct digits
+    PinValuesA = bit_set(PinValuesA, arg);
+    PinValuesB = bit_set(PinValuesB, arg);
+    PinValuesA = bit_set(PinValuesA, arg+10);
+    PinValuesB = bit_set(PinValuesB, arg+10);
+    PinValuesA = bit_set(PinValuesA, arg+20);
+    PinValuesB = bit_set(PinValuesB, arg+20);
     //load register values into bytes in PinValues arrays
     //This is needed, because the ShiftReg library uses Byte arrays to load data
     loadShiftRegs();
@@ -282,33 +297,49 @@ void lightshow() {
   }
 }
 
-
+void depoison() {
+  //blink fast for a bit
+  while (digitalRead(btn) == HIGH) { //wait for release
+    loadPinRegs(true);
+    delay(20);
+    loadPinRegs();
+    delay(20);
+  }
+  bool end_loop = false;
+  int digit = 0; //digit to depoison
+  setAllPins(digit);
+  while (not end_loop) {
+    if (digitalRead(btn) == HIGH) {
+      //Exit routine -----------------------------------------------------------------
+      prevMillis = millis();
+      currentMillis = prevMillis;
+      while (digitalRead(btn) == HIGH) { //wait for release or hold for exit
+        currentMillis = millis();
+        if (currentMillis - prevMillis >= 3000) {
+          //blink fast for a bit
+          while (digitalRead(btn) == HIGH) { //wait for release
+            loadPinRegs(true);
+            delay(20);
+            loadPinRegs();
+            delay(20);
+          }
+          end_loop = true;
+        }
+      }
+      //Exit routine ----------------------------------------------------------------- 
+      digit++;
+      if (digit > 9) {
+        digit = 0;
+      }
+      setAllPins(digit);
+      
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  ////////////////////////////////////////////////////////////////////////////////////////
-  //WiFiManager
-  //Local intialization. Once its business is done, there is no need to keep it around
-  
-  //reset saved settings
-  //wifiManager.resetSettings();
-  
-  //set custom ip for portal
-  // wifiManager.setAPStaticIPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
-  
-  //fetches ssid and pass from eeprom and tries to connect
-  //if it does not connect it starts an access point with the specified name
-  //here  "AutoConnectAP"
-  //and goes into a blocking loop awaiting configuration
   wifiManager.autoConnect("AutoConnectAP");
-  //or use this for auto generated name ESP + ChipID
-  //wifiManager.autoConnect();
-  
-  //if you get here you have connected to the WiFi
-  // Serial.println("connected...yeey :)");
-  //////////////////////////////////////////////////////////////////////////////////////
-  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
-  // printLocalTime();
   initTime(timezone);
   rtc.setTimeStruct(timeinfo);
   //Shift Register
@@ -325,20 +356,31 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
+  //get time from rtc every 50ms
+  currentMillis = millis();
   if ((currentMillis - prevMillis >= 50)) {
     prevMillis = currentMillis;
     timeinfo = rtc.getTimeStruct();
   }
 
   if (digitalRead(btn) == HIGH){
+    //SHOW DATE///////////////////////////////////////////////////////////////////////////////////////////////
     show_date();
-    // Check if the button is released
-    while (digitalRead(btn) == HIGH) {} 
     prevMillis = millis();
     currentMillis = prevMillis;
-    //wait for a double press
-    while(currentMillis - prevMillis <= 200) { 
+
+    //DEPOISONING/////////////////////////////////////////////////////////////////////////////////////////////
+    while (digitalRead(btn) == HIGH) { //enter depoisoning if button helo for 3 sec
+      currentMillis = millis();
+      if (currentMillis - prevMillis >= 3000) {
+        depoison();
+      }
+    }
+    prevMillis = millis();
+    currentMillis = prevMillis;
+    //STOPWATCH///////////////////////////////////////////////////////////////////////////////////////////////
+    //if button not held, wait for a double press
+    while (currentMillis - prevMillis <= 200) { 
       if (digitalRead(btn) == HIGH) {
         //wait for btn depress
         while(digitalRead(btn) == HIGH) {} 
@@ -346,13 +388,15 @@ void loop() {
       }
       currentMillis = millis();
     }
-
+    //LIGHTSHOW///////////////////////////////////////////////////////////////////////////////////////////////
+    //if button held when exiting, do the lightshow
     delay(2000);
     if (digitalRead(btn) == HIGH) {
       lightshow();
     }
 
   }
+  //if a second turn over, update display register values
   else if ((prevSec != timeinfo.tm_sec)) {
     prevSec = timeinfo.tm_sec;
     //if it's midnight, get atomic time
